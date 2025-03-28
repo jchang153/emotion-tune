@@ -66,7 +66,7 @@ def get_OAI_api_response(messages, model="gpt-3.5-turbo", temperature=1.0, max_t
 
 
 
-def get_Claude_response(messages, model="claude-3-sonnet-20240229", temperature=1.0, max_tokens=1024, return_full_response=False):
+def get_Claude_response(messages, model="claude-3-7-sonnet-20250219", temperature=1.0, max_tokens=1024, return_full_response=False):
     try:
         client = anthropic.Anthropic()
 
@@ -88,7 +88,7 @@ def get_Claude_response(messages, model="claude-3-sonnet-20240229", temperature=
                 api_messages.append({"role": role, "content": content})
                 #print(f"Debug: Added {role} message {idx+1} to API messages")
 
-        if model == "gpt-4-vision-preview": model = "claude-3-sonnet-20240229"
+        if model == "gpt-4-vision-preview": model = "claude-3-7-sonnet-20250219"
         kwargs = {
             "model": model,
             "messages": api_messages,

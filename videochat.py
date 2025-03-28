@@ -32,7 +32,7 @@ if __name__ == "__main__":
     if pre_survey_emotions is not None:
 
         # Initialize model parameters and paths
-        model_name = "claude-3-sonnet-20240229"  # start with a good model
+        model_name = "claude-3-7-sonnet-20250219"  # start with a good model
         vision_model_name = "gpt-4-vision-preview"  # can this take regular text inputs too?
         secondary_model_name = "gpt-3.5-turbo-0125"  # switch to a cheaper model if the conversation gets too long
         max_context_length = 16000
