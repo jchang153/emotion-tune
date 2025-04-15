@@ -6,6 +6,7 @@ Dataset prep/*
 paz/*
 __pycache__/*
 utils/__pycache__/*
+fine-tuning/*
 
 test.py
 NRC-VAD-Lexicon.txt
