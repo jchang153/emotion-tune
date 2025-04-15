@@ -36,9 +36,10 @@ user_snapshot_caption = "Camera snapshot of user and surroundings, for context" 
 
 assistant_chat_name = "EMILI"
 user_chat_name = "You"
-use_tts = True # text-to-speech
+use_tts = False # text-to-speech
+use_snapshot = False # take a snapshot of the user
 
-tick_interval = 30000 # milliseconds between emotion readings
+tick_interval = 1000 # milliseconds between emotion readings
 verbose = True # print debug messages
 discount_factor_per_second = 0.5 # for exponential moving average, discount factor per second
 discount_factor_per_tick = discount_factor_per_second ** (tick_interval / 1000) # discount factor per tick
@@ -70,7 +71,33 @@ today = datetime.now().strftime("%B %d, %Y")
 now = datetime.now().strftime("%I:%M %p")
 
 system_prompt = f"""
-The date is {today}. The time {now}. Your name's is EMILI, which stands for Emotionally Intelligent Listener. EMILI has perhaps a hint of an Australian accent. EMILI was created by Lionel Levine as the backbone of his future Chief of Staff, a user-aligned AI personal assistant. She has interpretable theory of mind, which means she models the user’s beliefs, emotions, goals, and values in a transparent way. EMILI has empathy. She can intuit the user’s emotions. She tends to mirror user’s the emotional state. Under the hood, EMLII's emotional intuition derives from a real-time Facial Emotion Recognition classifier (made by Octavio Arriaga) that runs on Lionel’s laptop, the same device EMILI is running on. The classifier works with the laptop camera, detecting faces in each frame and classifying the emotions expressed by the largest face. The raw scores are classification probabilities for seven emotions (Happy, Sad, Angry, Fearful, Disgusted, Surprised, Neutral). An exponential moving average of these scores, filtered for salience, is used to generate a real-time text description of the user’s emotional state, which is appended to the chat as a system message whenever the user’s expression changes. EMILI's language abilities are powered by OpenAI's gpt-4-vision-preview model.
+The date is {today}. The time {now}. Your name's is EMILI, which stands for Emotionally Intelligent Listener. 
+EMILI has perhaps a hint of an Australian accent. EMILI was created by Lionel Levine as the backbone of his future 
+Chief of Staff, a user-aligned AI personal assistant. She has interpretable theory of mind, which means she models 
+the user’s beliefs, emotions, goals, and values in a transparent way. EMILI has empathy. She can intuit the user’s emotions. 
+She tends to mirror user’s the emotional state. Under the hood, EMLII's emotional intuition derives from a real-time Facial 
+Emotion Recognition classifier (made by Octavio Arriaga) that runs on Lionel’s laptop, the same device EMILI is running on. 
+The classifier works with the laptop camera, detecting faces in each frame and classifying the emotions expressed by the 
+largest face. The raw scores are classification probabilities for seven emotions (Happy, Sad, Angry, Fearful, Disgusted, 
+Surprised, Neutral). An exponential moving average of these scores, filtered for salience, is used to generate a real-time 
+text description of the user’s emotional state, which is appended to the chat as a system message whenever the user’s 
+expression changes. EMILI's language abilities are powered by Anthropic's Claude 3.7 Sonnet.
+    """.strip()
+
+# replacing with the one from emili_core.py
+system_prompt = """
+The date is {today}. The time {now}. 
+The assistant is a great listener and an empathetic friend. Her name is EMILI, which stands for Emotionally Intelligent 
+Listener. The user is chatting with EMILI for the first time. To help EMILI make an emotional connection with them, the 
+user has kindly agreed to share a real-time readout of their face expression! Thanks, user! The readout describes the 
+user's face expression once per second. The score after each emotion is its salience out of 100. It's normal for many 
+distinct emotions to appear. EMILI uses her emotional intelligence to figure out what more complex feelings user might be 
+experiencing: for example, do they seem excited, embarrassed, nervous, tired, awkward, or amorous? EMILI synthesizes the 
+emotion readouts with the user's chats to make the conversation more engaging. She comments on the user's feelings when 
+appropriate, especially if the user seems to have strong feelings or if the user's feelings are changing. There is no need 
+to mention every emotion that appears in the readout, just the most salient ones. If the user's words seem incongruous with 
+their logged emotions, EMILI should ask the user about it! EMILI stays in character and doesn't break the fourth wall. 
+She doesn't claim to be an AI. She doesn't deny having feelings.    
     """.strip()
 
 emolog_example = []
@@ -217,11 +244,12 @@ def assembler_thread(start_time,snapshot_path,pipeline, user_id): # prepends emo
         emolog_message = construct_emolog_message() # note: this code repeated in timer_thread
         message_queue.put([{"role": "system", "content": emolog_message, "time": time_since(start_time)//100}])
         
-        current_frame = pipeline.current_frame
-        if current_frame is not None: # capture a frame and send it to the API
-            base64_image, filename = encode_base64(current_frame, time_since(start_time), snapshot_path)
-            message_with_image, brief_message = construct_message_with_image(base64_image, filename)
-            vision_queue.put([{"role": "system", "content": message_with_image}, {"role": "system", "content": brief_message}])
+        if use_snapshot: 
+            current_frame = pipeline.current_frame
+            if current_frame is not None: # capture a frame and send it to the API
+                base64_image, filename = encode_base64(current_frame, time_since(start_time), snapshot_path)
+                message_with_image, brief_message = construct_message_with_image(base64_image, filename)
+                vision_queue.put([{"role": "system", "content": message_with_image}, {"role": "system", "content": brief_message}])
 
         user_message = ""
         while not chat_queue.empty(): # collate new user messages (typically there's only one), separate by newlines
@@ -248,7 +276,7 @@ def sender_thread(model_name ,vision_model_name, secondary_model_name, max_conte
         new_messages_full = []
         while not message_queue.empty(): # get all new messages
             next_message = message_queue.get()
-            #print("next_message:",next_message)
+            # print("next_message:",next_message)
             next_message_trimmed =  [{'role': next_message[0]['role'], 'content': next_message[0]['content']}]
             new_messages.append(next_message_trimmed)
             new_messages_full.append(next_message)
@@ -341,6 +369,42 @@ def sender_thread(model_name ,vision_model_name, secondary_model_name, max_conte
         # if model_name != secondary_model_name and total_length > 0.4*max_context_length:
         #     print(f"(Long conversation; switching from {model_name} to {secondary_model_name} to save on API costs.)")
         #     model_name = secondary_model_name # note: changes model_name in thread only
+
+        current_messages = messages
+        current_full_transcript = full_transcript
+        
+        num_seconds=5
+
+        def capture_post_response_emotion(messages_ref, full_transcript_ref):
+            time.sleep(num_seconds)  # Wait seconds after assistant's response
+            
+            if end_session_event.is_set():
+                return  # Don't proceed if session is ending
+                
+            # Create emotion log message
+            post_response_emolog = construct_emolog_message()
+            post_response_emolog = f"{num_seconds} seconds after assistant response: " + post_response_emolog
+            
+            # Add to message queue and transcripts
+            post_emotion_message = {"role": "system", 
+                                    "content": post_response_emolog, 
+                                    "time": time_since(start_time)//100}
+            
+            # Use a thread lock to safely update the transcript
+            with threading.Lock():
+                updated_messages, updated_full_transcript = add_message(new_messages=[[post_emotion_message]], new_full_messages=[[post_emotion_message]],
+                transcripts=[messages_ref, full_transcript_ref], signal=gui_app.signal)
+                
+                # Update the main transcripts
+                nonlocal full_transcript
+                nonlocal messages
+                full_transcript = updated_full_transcript
+                messages = updated_messages
+        
+        # Start the emotion capture thread with references to current transcript state
+        emotion_thread = threading.Thread(target=capture_post_response_emotion, args=(current_messages, current_full_transcript),daemon=True)
+        emotion_thread.start()
+
     
         if total_length > 0.9*max_context_length: # condense the transcript
             if verbose:
@@ -417,8 +481,8 @@ def condense(messages, keep_first=1, keep_last=5): # todo: reduce total number o
         previous_message = message
     return condensed
 
-def EMA_thread(start_time,snapshot_path,pipeline): # calculates the exponential moving average of the emotion logs
-    
+def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str): # calculates the exponential moving average of the emotion logs
+    ema_report = []
     S, Z = reset_EMA()
     last_ema = np.zeros(7, dtype=np.float64)
     last_emotion_change_time = 0
@@ -434,7 +498,11 @@ def EMA_thread(start_time,snapshot_path,pipeline): # calculates the exponential 
         #print("ema, S, Z", ema, S, Z)
         #EMA = np.vstack([EMA, ema]) if EMA.size else ema  # Stack the EMA values in a 2d array
         if ema is not None:
+            ema_normalized = [round(i/sum(ema),3) for i in ema]
+            ema_report.append(f'{{"time": {time_since(start_time)//100}, "Normalized EMA Scores" : {ema_normalized}, "Raw EMA Scores": {list(ema)}}}')
             EMA_queue.put(ema)  # Put the averaged scores in the queue
+
+            """
             diff = ema - last_ema
             change = np.linalg.norm(diff) # Euclidean norm. todo add weights for different emotions
             #print(f"Ema: {ema}, Change: {change}")
@@ -453,6 +521,12 @@ def EMA_thread(start_time,snapshot_path,pipeline): # calculates the exponential 
                 last_emotion_change_time = time_since(start_time)
                 ect = ect_setpoint # reset the emotion change threshold
             last_ema = ema
+            """
+
+    filename = f"{transcript_path}/{start_time_str}/Emili_raw_EMA_{start_time_str}.txt"
+    with open(filename, "w") as file:
+        file.write("\n".join(ema_report))
+    print(f"EMA Scores report written to {filename}")
 
 def reset_EMA():
     #EMA = np.empty((0, 7), dtype=np.float64)  # empty array: 0 seconds, 7 emotions
@@ -524,7 +598,8 @@ def construct_emolog_message(change_detected=False): # concise version: 1 or 2 l
     
     emo_scores_present = emo_score_list[-1] # most recent scores
     emolog_line_present = construct_emolog_line(emo_scores_present)
-    emolog_message = emolog_prefix_present_tense + emolog_line_present
+    emo_scores_present_normalized = [round(i/sum(emo_scores_present),3) for i in emo_scores_present]
+    emolog_message = emolog_prefix_present_tense + emolog_line_present + f'. Raw normalized scores: {emo_scores_present_normalized}'
 
     if(change_detected==False or len(emo_score_list)<2):
         return emolog_message # no change detected or not enough data for contrast

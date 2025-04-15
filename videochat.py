@@ -78,7 +78,10 @@ if __name__ == "__main__":
         tick_thread = threading.Thread(target=tick)
         tick_thread.start()
 
-        EMA_thread = threading.Thread(target=EMA_thread, args=(start_time, snapshot_path, pipeline), daemon=True)
+        EMA_thread = threading.Thread(
+            target=EMA_thread, 
+            args=(start_time, snapshot_path, pipeline, transcript_path, start_time_str), 
+            daemon=True)
         EMA_thread.start()
 
         use_anthropic = True  # use anthropic API for emotion detection
