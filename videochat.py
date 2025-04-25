@@ -86,16 +86,18 @@ if __name__ == "__main__":
 
         use_anthropic = True  # use anthropic API for emotion detection
         print(f"Anthropic value: {use_anthropic}")  # Add this line
+        
         sender_thread = threading.Thread(
             target=sender_thread,
             args=(model_name, vision_model_name, secondary_model_name, max_context_length, gui_app, transcript_path,
                 start_time_str, start_time, use_anthropic),
             daemon=True)
-        
         sender_thread.start()
 
-        assembler_thread = threading.Thread(target=assembler_thread,
-                                            args=(start_time, snapshot_path, pipeline, user_id), daemon=True)
+        assembler_thread = threading.Thread(
+            target=assembler_thread,
+            args=(start_time, snapshot_path, pipeline, user_id), 
+            daemon=True)
         assembler_thread.start()
 
         print(f"Video chat with {model_name} using emotion labels sourced from on-device camera.")

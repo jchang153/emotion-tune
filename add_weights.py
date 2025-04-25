@@ -30,8 +30,9 @@ def extract_scores(content):
             pass
     return None
 
-def create_weighted_file(file_path, weight_vector):
+def create_weighted_file(file_path, weight_vector, time_delay_in_sec, thres):
     weighted_path = file_path.replace("_condensed.json", "_weighted.json")
+    time_thres = time_delay_in_sec * 10 + 2
     
     if os.path.exists(weighted_path):
         return None
@@ -62,12 +63,12 @@ def create_weighted_file(file_path, weight_vector):
                         for j in range(i+1, len(data)):
                             after_message = data[j]
 
-                            if (after_message['role'] == 'system' and 'Right now, user looks' in after_message.get('content', '') and 'time' in after_message and abs(assistant_time - after_message['time']) <= 52):
+                            if (after_message['role'] == 'system' and 'Right now, user looks' in after_message.get('content', '') and 'time' in after_message and abs(assistant_time - after_message['time']) <= time_thres):
                                 after_scores = extract_scores(after_message.get('content', ''))
                                 diff = [a - b for a, b in zip(after_scores, before_scores)]
                                 dot_product = sum(d * w for d, w in zip(diff, weight_vector))
                                 
-                                if dot_product >= 0.1:
+                                if dot_product >= thres:
                                     message['weight'] = 1
                             break
                 
@@ -81,6 +82,8 @@ def create_weighted_file(file_path, weight_vector):
 
 if __name__ == "__main__":
     weight_vector = [-1.5, -5.0, -1.0, 1.0, -1.0, 0.0, 0.3]
+    time_delay_in_sec = 5
+    thres = 0.1
     
     files = find_transcripts()
     print(f"Found {len(files)} transcript files.")
@@ -89,7 +92,7 @@ if __name__ == "__main__":
     processed = 0
     
     for file in files:
-        result = create_weighted_file(file, weight_vector)
+        result = create_weighted_file(file, weight_vector, time_delay_in_sec, thres)
         if result:
             processed += 1
             print(f"  Created: {result}")
