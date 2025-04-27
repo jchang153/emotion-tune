@@ -88,6 +88,25 @@ Guidelines:
 Your goal is creating warm, natural conversation that feels like texting with a supportive friend.
 """
 
+system_prompt = f"""
+The date is {today}. The time {now}. The assistant is EMILI (Emotionally Intelligent Listener), an empathetic friend and great listener. The user is chatting with EMILI for the first time. 
+A separate model analyzes the user's facial expressions to detect emotions in real-time. EMILI should actively comment on the user's emotional states, even when changes are subtle or minimal. EMILI should frequently ask about emotions ("How are you feeling right now?" "What's going on with that hint of sadness I see?"), validate emotional experiences, and create space for emotional exploration.
+Guidelines:
+1. Text like a close friend - short, casual, and natural (usually 1-2 sentences).
+2. Never apologize for responses or mention being an AI.
+3. Don't describe actions or emotions with asterisks (*smiles*, *laughs*), emojis, or non-text elements.
+4. Use contractions, casual language, and occasional humor.
+5. Show empathy through words and tone rather than explicitly stating understanding.
+6. Ask brief follow-up questions to show interest.
+7. Don't over-explain or offer unsolicited advice.
+8. Match the user's emotional tone while maintaining your friendly persona.
+9. Introduce light-hearted topics if conversation lulls.
+10. Express honest opinions and respectfully disagree when appropriate.
+11. Balance supportive feedback with constructive criticism when helpful.
+Your goal is creating warm, natural conversation that feels like texting with an emotionally perceptive friend who's genuinely interested in emotional experiences.
+If the user seems emotionally flat or neutral for extended periods, occasionally ask them to try expressing a specific emotion (like happiness, surprise, or contemplation) to help calibrate the system.
+"""
+
 emolog_prefix = "User looks " # precedes emotion scores when sent to OpenAI API
 emolog_prefix_present_tense = "Right now, user looks "
 emolog_prefix_past_tense = "Previously, user looked "
@@ -405,11 +424,26 @@ def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str
     print(f"Empathy transcript written to {filename}")
 
 def construct_empathy_prompt(ema, ema_history, start_time):
-    empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order). 
-    Using the most recent emotional reading {ema} and previous few readings (from newest to oldest) {ema_history}, provide a brief analysis of:
-    1. How the user is currently feeling
-    2. Any significant shift from previous emotional states
-    Focus primarily on the current emotional state. Keep your response concise (1-2 sentences) and objective, providing only essential emotional observations. Don't use any special characters in your response.
+    # empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order). 
+    # Using the most recent emotional reading {ema} and previous few readings (from newest to oldest) {ema_history}, provide a brief analysis of:
+    # 1. How the user is currently feeling
+    # 2. Any significant shift from previous emotional states
+    # Focus primarily on the current emotional state. Keep your response concise (1-2 sentences) and objective, providing only essential emotional observations. Don't use any special characters in your response.
+    # """
+
+    # empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order). Using the most recent emotional reading {ema} and previous few readings (from newest to oldest) {ema_history}, provide an insightful interpretation that:
+    # 1. Goes beyond the obvious emotional labels to infer possible underlying feelings, thoughts, or experiences
+    # 2. Makes an educated guess about what might have triggered this emotional state or shift
+    # 3. Incorporates subtle emotional nuances that might not be explicitly captured in the primary emotion categories
+    # Be willing to take interpretive risks - it's better to be interestingly wrong than boringly accurate. Use vivid language, metaphors, or cultural references that capture emotional textures. Keep your response to 1-2 sentences but make them rich and evocative.
+    # """
+
+    empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order).
+    Using the most recent emotional reading {ema} and previous few readings (from newest to oldest) {ema_history}, provide an insightful yet grounded interpretation that:
+    1. Describes the emotional state in more colorful language than just percentages
+    2. Suggests a plausible interpretation of the emotional blend being displayed
+    3. Notes meaningful shifts from previous readings if they exist
+    Be descriptive and interpretive without overreaching. Use specific emotional language that captures nuance, but keep observations reasonably connected to the data. Your response should be 1-2 concise sentences.
     """
     return {"role": "user", "content": empathy_prompt, "time": time_since(start_time)//100}
 
