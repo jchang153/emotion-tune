@@ -69,7 +69,11 @@ if __name__ == "__main__":
         gui_app = ChatApp(start_time, chat_window_dims, user_chat_name, assistant_chat_name, chat_queue,
                           chat_timestamps, new_chat_event, end_session_event)
         
-        gui_app.signal.response_selected.connect(on_response_selected)
+
+        """
+        Code for EMILI DPO
+        """
+        # gui_app.signal.response_selected.connect(on_response_selected)
 
         pipeline = Emolog(start_time, [args.offset, args.offset],
                           f'{directory}/Emili_raw_{start_time_str}.txt')  # video processing pipeline

@@ -13,6 +13,7 @@ import json
 import math
 import time
 from datetime import datetime
+import random
 
 import cProfile
 import pstats
@@ -477,8 +478,12 @@ class Visualizer(QMainWindow):  # GUI for real-time FER visualizer
 class ChatSignal(QObject):
     new_message = pyqtSignal(dict)  # Signal to display a new user message, carries dict payload with message
     update_transcript = pyqtSignal(list)  # Signal to update the transcript display, carries list payload with transcript
-    new_dual_responses = pyqtSignal(dict, dict)  # NEW: Signal for displaying two responses
-    response_selected = pyqtSignal(dict)  # NEW: Signal when user selects a response
+
+    """
+    Code for EMILI DPO
+    """
+    # new_dual_responses = pyqtSignal(dict, dict)  # NEW: Signal for displaying two responses
+    # response_selected = pyqtSignal(dict)  # NEW: Signal when user selects a response
 
 
 class ChatApp(QMainWindow):  # GUI for LLM video chat
@@ -522,8 +527,12 @@ class ChatApp(QMainWindow):  # GUI for LLM video chat
         self.init_FER_tab()
         self.init_transcript_tab()
         self.signal.new_message.connect(self.display_new_message)
-        self.signal.update_transcript.connect(self.update_transcript_display)
-        self.signal.new_dual_responses.connect(self.display_dual_responses)
+
+        """
+        Code for EMILI DPO
+        """
+        # self.signal.update_transcript.connect(self.update_transcript_display)
+        # self.signal.new_dual_responses.connect(self.display_dual_responses)
 
     def closeEvent(self, event):  # called when user closes the GUI window
         self.end_session_event.set()  # Signal other threads that the session should end
@@ -619,56 +628,72 @@ class ChatApp(QMainWindow):  # GUI for LLM video chat
         # transcript_html = transcript_json.replace('\\n', '<br>') # render line breaks
         # self.transcript_display.setHtml(transcript_html)
 
-    def display_dual_responses(self, response_d, response_e):
-        # Create a dialog for response selection
-        selection_dialog = QDialog(self)
-        selection_dialog.setWindowTitle("Select Better Response")
-        selection_dialog.setMinimumWidth(600)
-        selection_layout = QVBoxLayout(selection_dialog)
+    """
+    Code for EMILI DPO
+    """
+    # def display_dual_responses(self, response_d, response_e):
+    #     # Create a dialog for response selection
+    #     selection_dialog = QDialog(self)
+    #     selection_dialog.setWindowTitle("Select Preferred Response")
+    #     selection_dialog.setMinimumWidth(800)  # Wider to accommodate side-by-side layout
         
-        # Label at the top
-        label = QLabel("Please select the response you prefer:")
-        label.setStyleSheet("QLabel { font-size: 16pt; }")
-        selection_layout.addWidget(label)
+    #     # Main layout - horizontal for side by side display
+    #     main_layout = QHBoxLayout(selection_dialog)
         
-        # Standard response
-        default_group = QGroupBox("Standard Response")
-        default_group.setStyleSheet("QGroupBox { font-size: 14pt; }")
-        default_layout = QVBoxLayout(default_group)
-        default_response = QTextEdit()
-        default_response.setReadOnly(True)
-        default_response.setStyleSheet("QTextEdit { font-size: 14pt; }")
-        default_response.setText(response_d['content'])
-        default_layout.addWidget(default_response)
-        selection_layout.addWidget(default_group)
+    #     # Left response
+    #     left_group = QGroupBox("Response A")
+    #     left_layout = QVBoxLayout(left_group)
+    #     left_response = QTextEdit()
+    #     left_response.setReadOnly(True)
+    #     left_response.setMinimumWidth(350)
+    #     left_response.setMinimumHeight(300)
+    #     left_response.setStyleSheet("QTextEdit { font-size: 14pt; }")
+    #     left_response.setText(response_d['content'])
+    #     left_layout.addWidget(left_response)
+    #     left_button = QPushButton("Select Response A")
+    #     left_button.setStyleSheet("QPushButton { font-size: 14pt; padding: 8px; }")
+    #     left_button.clicked.connect(lambda: self._complete_response_selection(selection_dialog, response_d))
+    #     left_layout.addWidget(left_button)
+    #     main_layout.addWidget(left_group)
         
-        # Emotion-aware response
-        emotion_group = QGroupBox("Emotion-Aware Response")
-        emotion_group.setStyleSheet("QGroupBox { font-size: 14pt; }")
-        emotion_layout = QVBoxLayout(emotion_group)
-        emotion_response = QTextEdit()
-        emotion_response.setReadOnly(True)
-        emotion_response.setStyleSheet("QTextEdit { font-size: 14pt; }")
-        emotion_response.setText(response_e['content'])
-        emotion_layout.addWidget(emotion_response)
-        selection_layout.addWidget(emotion_group)
+    #     # Right response
+    #     right_group = QGroupBox("Response B")
+    #     right_layout = QVBoxLayout(right_group)
+    #     right_response = QTextEdit()
+    #     right_response.setReadOnly(True)
+    #     right_response.setMinimumWidth(350)
+    #     right_response.setMinimumHeight(300)
+    #     right_response.setStyleSheet("QTextEdit { font-size: 14pt; }")
+    #     right_response.setText(response_e['content'])
+    #     right_layout.addWidget(right_response)
+    #     right_button = QPushButton("Select Response B")
+    #     right_button.setStyleSheet("QPushButton { font-size: 14pt; padding: 8px; }")
+    #     right_button.clicked.connect(lambda: self._complete_response_selection(selection_dialog, response_e))
+    #     right_layout.addWidget(right_button)
+    #     main_layout.addWidget(right_group)
         
-        # Buttons for selection
-        button_layout = QHBoxLayout()
-        default_button = QPushButton("Select Standard Response")
-        default_button.setStyleSheet("QPushButton { font-size: 14pt; padding: 8px; }")
-        default_button.clicked.connect(lambda: self._complete_response_selection(selection_dialog, response_d))
-        emotion_button = QPushButton("Select Emotion-Aware Response")
-        emotion_button.setStyleSheet("QPushButton { font-size: 14pt; padding: 8px; }")
-        emotion_button.clicked.connect(lambda: self._complete_response_selection(selection_dialog, response_e))
-        button_layout.addWidget(default_button)
-        button_layout.addWidget(emotion_button)
-        selection_layout.addLayout(button_layout)
+    #     # Randomly shuffle which response goes on which side
+    #     if random.choice([True, False]):
+    #         left_response.setText(response_e['content'])
+    #         right_response.setText(response_d['content'])
+    #         left_button.clicked.disconnect()
+    #         right_button.clicked.disconnect()
+    #         left_button.clicked.connect(lambda: self._complete_response_selection(selection_dialog, response_e))
+    #         right_button.clicked.connect(lambda: self._complete_response_selection(selection_dialog, response_d))
         
-        # Show the dialog (this blocks until it's closed)
-        selection_dialog.exec_()
+    #     # Instructions at the top
+    #     instructions = QLabel("Please select which response you prefer:")
+    #     instructions.setStyleSheet("QLabel { font-size: 16pt; margin-bottom: 10px; }")
         
-    def _complete_response_selection(self, dialog, selected_response):
-        dialog.accept()
-        self.display_new_message(selected_response)
-        self.signal.response_selected.emit(selected_response)
+    #     # Add instructions above the side-by-side layout
+    #     layout = QVBoxLayout()
+    #     layout.addWidget(instructions)
+    #     layout.addLayout(main_layout)
+        
+    #     selection_dialog.setLayout(layout)
+    #     selection_dialog.exec_()
+        
+    # def _complete_response_selection(self, dialog, selected_response):
+    #     dialog.accept()
+    #     self.display_new_message(selected_response)
+    #     self.signal.response_selected.emit(selected_response)

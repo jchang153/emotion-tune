@@ -32,8 +32,15 @@ new_message_event = threading.Event() # new message to be sent to OpenAI API
 tick_event = threading.Event() # ticks once per second, triggers EMA calculation
 emotion_change_event = threading.Event() # set when there is a sudden change in user emotions
 end_session_event = threading.Event() # triggered when the user enters 'q' to end the session
-response_selection_event = threading.Event()
-selected_response = None
+
+"""
+Code for EMILI DPO
+"""
+# response_selection_event = threading.Event()
+# selected_response = None
+
+emotion_averages = np.array([0.128, 0.022, 0.061, 0.028, 0.147, 0.006, 0.608])
+emotion_stds = np.array([0.068, 0.035, 0.041, 0.08 , 0.078, 0.019, 0.174])
 
 user_snapshot_caption = "Camera snapshot of user and surroundings, for context" # for vision API call
 
@@ -73,9 +80,27 @@ salience_threshold.append([10,50,60,75,88])
 today = datetime.now().strftime("%B %d, %Y")
 now = datetime.now().strftime("%I:%M %p")
 
-system_prompt = f"""
+system_prompt_e = f"""
 The date is {today}. The time {now}. The assistant is EMILI (Emotionally Intelligent Listener), an empathetic friend and great listener. The user is chatting with EMILI for the first time. 
 A separate model analyzes the user's facial expressions to detect emotions in real-time. EMILI should comment on significant emotional changes or strong feelings, especially when they seem incongruent with the user's words. EMILI stays in character, doesn't break the fourth wall, doesn't claim to be an AI, and doesn't deny having feelings.
+Guidelines:
+1. Text like a close friend - short, casual, and natural (usually 1-2 sentences).
+2. Never apologize for responses or mention being an AI.
+3. Don't describe actions or emotions with asterisks (*smiles*, *laughs*), emojis, or non-text elements.
+4. Use contractions, casual language, and occasional humor.
+5. Show empathy through words and tone rather than explicitly stating understanding.
+6. Ask brief follow-up questions to show interest.
+7. Don't over-explain or offer unsolicited advice.
+8. Match the user's emotional tone while maintaining your friendly persona.
+9. Introduce light-hearted topics if conversation lulls.
+10. Express honest opinions and respectfully disagree when appropriate.
+11. Balance supportive feedback with constructive criticism when helpful.
+Your goal is creating warm, natural conversation that feels like texting with a supportive friend.
+"""
+
+system_prompt_d = f"""
+The date is {today}. The time {now}. The assistant is EMILI (Emotionally Intelligent Listener), an empathetic friend and great listener. The user is chatting with EMILI for the first time. 
+EMILI stays in character, doesn't break the fourth wall, doesn't claim to be an AI, and doesn't deny having feelings.
 Guidelines:
 1. Text like a close friend - short, casual, and natural (usually 1-2 sentences).
 2. Never apologize for responses or mention being an AI.
@@ -152,11 +177,12 @@ def assembler_thread(start_time,snapshot_path,pipeline, user_id): # adds new cha
         new_message_event.set()  # Signal new message to the sender thread
 
 def sender_thread(model_name, max_context_length, gui_app, transcript_path, start_time_str, start_time,use_anthropic=False): 
-    dialogue_start = [{"role": "system", "content": system_prompt, "time": time_since(start_time)//100}]
+    dialogue_start_d = [{"role": "system", "content": system_prompt_d, "time": time_since(start_time)//100}]
+    # dialogue_start_e = [{"role": "system", "content": system_prompt_e, "time": time_since(start_time)//100}]
 
-    messages = deepcopy(dialogue_start)
-    messages_d = deepcopy(dialogue_start) # default message transcript
-    messages_e = deepcopy(dialogue_start) # emotional message transcript
+    messages = deepcopy(dialogue_start_d)
+    # messages_d = deepcopy(dialogue_start_d) # default message transcript
+    # messages_e = deepcopy(dialogue_start_e) # emotional message transcript
 
     while not end_session_event.is_set():
         new_message_event.wait()  # Wait for a new message to be prepared by the assembler or timer thread
@@ -169,49 +195,56 @@ def sender_thread(model_name, max_context_length, gui_app, transcript_path, star
             next_message = message_queue.get()
             new_messages.append(next_message)
 
-        new_empathy_messages = []
+        # new_empathy_messages = []
         
-        while not empathy_queue.empty():
-            next_message = empathy_queue.get()
-            new_empathy_messages.append(next_message)
+        # while not empathy_queue.empty():
+        #     next_message = empathy_queue.get()
+        #     new_empathy_messages.append(next_message)
 
         messages = add_message2(new_messages,messages)
         gui_app.signal.update_transcript.emit(messages)
 
         max_tokens = 160
 
-        messages_d = add_message2(new_messages, messages_d)
-        messages_e = add_message2(new_messages, messages_e)
-        new_message_d = get_anthropic_response_message(messages_d, model_name, max_tokens, start_time)
+        messages = add_message2(new_messages, messages)
+        new_message = get_anthropic_response_message(messages, model_name, max_tokens, start_time)
 
-        if len(new_empathy_messages) > 0:
-            messages_e = add_message2(new_empathy_messages, messages_e)
-            new_message_e = get_anthropic_response_message(messages_e, model_name, max_tokens, start_time)
 
-            # With this:
-            gui_app.signal.new_dual_responses.emit(new_message_d, new_message_e)
-            response_selection_event.clear()
-            response_selection_event.wait()  # Block until user selects a response
+        """
+        Code for EMILI DPO
+        """
+        # if len(new_empathy_messages) > 0:
+        #     messages_e = add_message2(new_empathy_messages, messages_e)
+        #     messages_e = add_message2(new_messages, messages_e)
+        #     new_message_e = get_anthropic_response_message(messages_e, model_name, max_tokens, start_time)
 
-            # After user selection, use the selected response
-            new_message = selected_response
-            messages_d = add_message2([new_message], messages_d)
-            messages_e = add_message2([new_message], messages_e)
+        #     # With this:
+        #     gui_app.signal.new_dual_responses.emit(new_message_d, new_message_e)
+        #     response_selection_event.clear()
+        #     response_selection_event.wait()  # Block until user selects a response
 
-            if selected_response == new_message_e:
-                messages = add_message2([{"preferred_output": [new_message_e], "non_preferred_output": [new_message_d]}], messages)
-            else:
-                messages = add_message2([{"preferred_output": [new_message_d], "non_preferred_output": [new_message_e]}], messages)
+        #     # After user selection, use the selected response
+        #     new_message = selected_response
+        #     messages_d = add_message2([new_message], messages_d)
+        #     messages_e = add_message2([new_message], messages_e)
+
+        #     if selected_response == new_message_e:
+        #         messages = add_message2([{"preferred_output": [new_message_e], "non_preferred_output": [new_message_d]}], messages)
+        #     else:
+        #         messages = add_message2([{"preferred_output": [new_message_d], "non_preferred_output": [new_message_e]}], messages)
             
-            gui_app.signal.update_transcript.emit(messages)
+        #     gui_app.signal.update_transcript.emit(messages)
             
-        else:
-            new_message = new_message_d
-            messages = add_message2([new_message],messages)
-            messages_d = add_message2([new_message], messages_d)
-            messages_e = add_message2([new_message], messages_e)
-            gui_app.signal.new_message.emit(new_message) # Signal GUI to display the new chat
+        # else:
+        #     messages_e = add_message2(new_messages, messages_e)
+        #     new_message = new_message_d
+        #     messages = add_message2([new_message],messages)
+        #     messages_d = add_message2([new_message], messages_d)
+        #     messages_e = add_message2([new_message], messages_e)
+        #     gui_app.signal.new_message.emit(new_message) # Signal GUI to display the new chat
 
+        messages = add_message2([new_message],messages)
+        gui_app.signal.new_message.emit(new_message)
         gui_app.signal.update_transcript.emit(messages)
     
         # if total_length > 0.9*max_context_length: # condense the transcript
@@ -270,10 +303,14 @@ def handle_anthropic_response(full_response):
 
     return response, total_length
 
-def on_response_selected(response):
-    global selected_response
-    selected_response = response
-    response_selection_event.set()
+
+"""
+Code for EMILI DPO
+"""
+# def on_response_selected(response):
+#     global selected_response
+#     selected_response = response
+#     response_selection_event.set()
 
 def add_message2(new_messages, transcript):
     for msg in new_messages:
@@ -356,36 +393,19 @@ def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str
             # the following is for prompting the empathy model
             empathy_prompt = construct_empathy_prompt(ema_normalized, emas_normalized[-4:-1][::-1], start_time)
 
-            max_tokens = 160
-            full_response = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
+            max_tokens = 20
+            full_response_1 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
+            full_response_2 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
 
-            if isinstance(full_response, Message):
-                # Extract text from the response
-                response = ""
-                for content in full_response.content:
-                    if isinstance(content, TextBlock):
-                        response += content.text
-                response = response.strip()
-                
-                # Get token counts from usage information
-                response_length = full_response.usage.output_tokens
-                total_length = full_response.usage.input_tokens + full_response.usage.output_tokens
-            elif isinstance(full_response, dict) and 'error' in full_response:
-                # Handle error case
-                response = f"Error from Anthropic API: {full_response['error']}"
-                response_length = 0
-                total_length = 0
-            else:
-                # Handle unexpected response format
-                response = "Error: Unexpected response format from Anthropic API"
-                response_length = 0
-                total_length = 0
-
-            empathy_response = {"role": "assistant", "content": response, "time": time_since(start_time)//100}
-            empathy_queue.put({"role": "system", "content": response, "time": time_since(start_time)//100})
+            response_1, total_length_1 = handle_anthropic_response(full_response_1)
+            response_2, total_length_2 = handle_anthropic_response(full_response_2)
+        
+            empathy_response_1 = {"role": "assistant", "content": response_1, "time": time_since(start_time)//100}
+            empathy_response_2 = {"role": "assistant", "content": response_2, "time": time_since(start_time)//100}
 
             empathy_transcript.append(empathy_prompt)
-            empathy_transcript.append(empathy_response)
+
+
 
     filename = f"{transcript_path}/{start_time_str}/Emili_raw_EMA_{start_time_str}.txt"
     with open(filename, "w") as file:
@@ -412,13 +432,18 @@ def construct_empathy_prompt(ema, ema_history, start_time):
     # Be willing to take interpretive risks - it's better to be interestingly wrong than boringly accurate. Use vivid language, metaphors, or cultural references that capture emotional textures. Keep your response to 1-2 sentences but make them rich and evocative.
     # """
 
-    empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order).
-    Using the most recent emotional reading {ema} and previous few readings (from newest to oldest) {ema_history}, provide an insightful yet grounded interpretation that:
-    1. Describes the emotional state in more colorful language than just percentages
-    2. Suggests a plausible interpretation of the emotional blend being displayed
-    3. Notes meaningful shifts from previous readings if they exist
-    Be descriptive and interpretive without overreaching. Use specific emotional language that captures nuance, but keep observations reasonably connected to the data. Your response should be 1-2 concise sentences.
+    # empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order).
+    # Using the most recent emotional reading {ema} and previous few readings (from newest to oldest) {ema_history}, along with the user's average emotions {average_emotions}, provide an insightful yet grounded interpretation that:
+    # 1. Describes the emotional state in more colorful language than just percentages
+    # 2. Suggests a plausible interpretation of the emotional blend being displayed
+    # 3. Notes meaningful shifts from previous readings if they exist
+    # Be descriptive and interpretive without overreaching. Use specific emotional language that captures nuance, but keep observations reasonably connected to the data. Your response should be 1-2 concise sentences.
+    # """
+
+    empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order), but don't rely on these labels, as every user is different.
+    The most recent emotional reading, normalized by z-score from the user's average emotions, is {(np.array(ema)-emotion_averages)/emotion_stds}. Using this information, respond with two contrasting adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words, separated by a comma.
     """
+
     return {"role": "user", "content": empathy_prompt, "time": time_since(start_time)//100}
 
 def reset_EMA():
