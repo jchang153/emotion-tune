@@ -19,6 +19,7 @@ import cProfile
 import pstats
 
 from emili_core_old_with_logging import time_since
+from emili_core_dual_p import selected_emotion_queue, emotion_selection_done_event
 
 from PyQt5.QtWidgets import (QDialog, QVBoxLayout, QLabel, QComboBox, QPushButton)
 
@@ -478,6 +479,7 @@ class Visualizer(QMainWindow):  # GUI for real-time FER visualizer
 class ChatSignal(QObject):
     new_message = pyqtSignal(dict)  # Signal to display a new user message, carries dict payload with message
     update_transcript = pyqtSignal(list)  # Signal to update the transcript display, carries list payload with transcript
+    new_emotion_adjectives = pyqtSignal(str)  # NEW: Signal for emotion adjectives
 
     """
     Code for EMILI DPO
@@ -528,11 +530,24 @@ class ChatApp(QMainWindow):  # GUI for LLM video chat
         self.init_transcript_tab()
         self.signal.new_message.connect(self.display_new_message)
 
+        self.signal.new_emotion_adjectives.connect(self.show_emotion_adjectives_dialog)
+
         """
         Code for EMILI DPO
         """
         # self.signal.update_transcript.connect(self.update_transcript_display)
         # self.signal.new_dual_responses.connect(self.display_dual_responses)
+
+    def show_emotion_adjectives_dialog(self, adjectives):
+        selected_emotion = create_emotion_adjective_selector(adjectives)
+        # Put the selected emotion in the queue for the EMA thread
+        if selected_emotion:
+            selected_emotion_queue.put(selected_emotion)
+        else:
+            selected_emotion_queue.put("No selection")  # Handle case where user closes dialog without selecting
+            
+        # Signal that selection is complete
+        emotion_selection_done_event.set()
 
     def closeEvent(self, event):  # called when user closes the GUI window
         self.end_session_event.set()  # Signal other threads that the session should end
@@ -697,3 +712,63 @@ class ChatApp(QMainWindow):  # GUI for LLM video chat
     #     dialog.accept()
     #     self.display_new_message(selected_response)
     #     self.signal.response_selected.emit(selected_response)
+
+def create_emotion_adjective_selector(adjectives):
+    class EmotionAdjectiveSelector(QDialog):
+        def __init__(self, adjectives):
+            super().__init__()
+            self.selected_emotion = None
+            self.setWindowTitle("Emotion Check-in")
+            self.setGeometry(300, 300, 400, 200)
+            self.layout = QVBoxLayout()
+            
+            # Instructions
+            label = QLabel("How are you feeling right now?")
+            label.setStyleSheet("font-size: 16pt; margin-bottom: 20px;")
+            self.layout.addWidget(label)
+            
+            # Buttons for the two adjectives
+            adj_layout = QHBoxLayout()
+            adjective_list = adjectives.split()
+            adjective1, adjective2 = adjective_list[0], adjective_list[1]
+            self.button1 = QPushButton(adjective1)
+            self.button2 = QPushButton(adjective2)
+            self.button1.setStyleSheet("font-size: 14pt; padding: 10px;")
+            self.button2.setStyleSheet("font-size: 14pt; padding: 10px;")
+            self.button1.clicked.connect(lambda: self.select_emotion(adjective1))
+            self.button2.clicked.connect(lambda: self.select_emotion(adjective2))
+            
+            adj_layout.addWidget(self.button1)
+            adj_layout.addWidget(self.button2)
+            self.layout.addLayout(adj_layout)
+            
+            # Or enter your own
+            custom_layout = QHBoxLayout()
+            self.custom_input = QLineEdit()
+            self.custom_input.setPlaceholderText("Enter your own emotion...")
+            self.custom_input.setStyleSheet("font-size: 14pt; padding: 8px;")
+            self.custom_button = QPushButton("Submit")
+            self.custom_button.setStyleSheet("font-size: 14pt; padding: 8px;")
+            self.custom_button.clicked.connect(self.submit_custom)
+            
+            custom_layout.addWidget(self.custom_input)
+            custom_layout.addWidget(self.custom_button)
+            self.layout.addLayout(custom_layout)
+            
+            self.setLayout(self.layout)
+        
+        def select_emotion(self, adjective):
+            self.selected_emotion = adjective
+            self.accept()
+        
+        def submit_custom(self):
+            custom_emotion = self.custom_input.text().strip()
+            if custom_emotion:
+                self.selected_emotion = custom_emotion
+                self.accept()
+            else:
+                QMessageBox.warning(self, "Input Required", "Please enter an emotion.")
+    
+    dialog = EmotionAdjectiveSelector(adjectives)
+    result = dialog.exec_() # starts a loop that constantly waits for user input
+    return dialog.selected_emotion if result == QDialog.Accepted else None

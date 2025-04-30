@@ -33,6 +33,9 @@ tick_event = threading.Event() # ticks once per second, triggers EMA calculation
 emotion_change_event = threading.Event() # set when there is a sudden change in user emotions
 end_session_event = threading.Event() # triggered when the user enters 'q' to end the session
 
+selected_emotion_queue = queue.Queue()  # To pass user-selected emotions back to EMA thread
+emotion_selection_done_event = threading.Event()  # To signal when selection is complete
+
 """
 Code for EMILI DPO
 """
@@ -206,7 +209,6 @@ def sender_thread(model_name, max_context_length, gui_app, transcript_path, star
 
         max_tokens = 160
 
-        messages = add_message2(new_messages, messages)
         new_message = get_anthropic_response_message(messages, model_name, max_tokens, start_time)
 
 
@@ -257,15 +259,15 @@ def sender_thread(model_name, max_context_length, gui_app, transcript_path, star
         json.dump(messages, file, indent=4)
     print(f"Transcript written to {filename}")
 
-    filename = f"{transcript_path}/{start_time_str}/Emili_{start_time_str}_default.json" 
-    with open(filename, "w") as file:
-        json.dump(messages_d, file, indent=4)
-    print(f"Transcript written to {filename}")
+    # filename = f"{transcript_path}/{start_time_str}/Emili_{start_time_str}_default.json" 
+    # with open(filename, "w") as file:
+    #     json.dump(messages_d, file, indent=4)
+    # print(f"Transcript written to {filename}")
 
-    filename = f"{transcript_path}/{start_time_str}/Emili_{start_time_str}_emotion.json" 
-    with open(filename, "w") as file:
-        json.dump(messages_e, file, indent=4)
-    print(f"Transcript written to {filename}")
+    # filename = f"{transcript_path}/{start_time_str}/Emili_{start_time_str}_emotion.json" 
+    # with open(filename, "w") as file:
+    #     json.dump(messages_e, file, indent=4)
+    # print(f"Transcript written to {filename}")
 
 def get_anthropic_response_message(messages, model_name, max_tokens, start_time):
     full_response = get_Claude_response(messages, model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
@@ -358,7 +360,7 @@ def condense(messages, keep_first=1, keep_last=5): # todo: reduce total number o
         previous_message = message
     return condensed
 
-def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str, model_name): # calculates the exponential moving average of the emotion logs
+def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str, model_name, gui_app): # calculates the exponential moving average of the emotion logs
     emas = []
     emas_normalized = []
     ema_report = []
@@ -382,29 +384,52 @@ def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str
 
         if ema is not None:
             ema_normalized = [round(i/sum(ema),3) for i in ema]
+            z_scores = list((np.array(ema)-emotion_averages)/emotion_stds)
 
             emas.append(list(ema))
             emas_normalized.append(ema_normalized)
-            to_report = {"time": time_since(start_time)//100, "Normalized EMA Scores" : ema_normalized, "Raw EMA Scores": list(ema)}
+            to_report = {"time": time_since(start_time)//100, "Normalized EMA Scores" : ema_normalized, "Raw EMA Scores": list(ema), "Z-score": z_scores}
             ema_report.append(f'{to_report}')
 
             EMA_queue.put(ema)  # Put the averaged scores in the queue
 
             # the following is for prompting the empathy model
-            empathy_prompt = construct_empathy_prompt(ema_normalized, emas_normalized[-4:-1][::-1], start_time)
+            # empathy_prompt = construct_empathy_prompt(ema_normalized, emas_normalized[-4:-1][::-1], start_time)
+            empathy_prompt = construct_empathy_prompt(z_scores,None,start_time)
 
             max_tokens = 20
             full_response_1 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
             full_response_2 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
 
-            response_1, total_length_1 = handle_anthropic_response(full_response_1)
-            response_2, total_length_2 = handle_anthropic_response(full_response_2)
+            adjectives_1, _ = handle_anthropic_response(full_response_1)
+            adjectives_2, _ = handle_anthropic_response(full_response_2)
+
+            # Reset the event before showing dialog
+            emotion_selection_done_event.clear()
+            
+            # Emit signal to show dialog
+            gui_app.signal.new_emotion_adjectives.emit(adjectives_1)
+            emotion_selection_done_event.wait(timeout=60)  # 60 second timeout
+
+            selected_emotion = None
+            if not selected_emotion_queue.empty():
+                selected_emotion = selected_emotion_queue.get()
+
+            empathy_response_1 = {"role": "assistant", "content": f"{adjectives_1}, User selected {selected_emotion}", "time": time_since(start_time)//100}
+
+            emotion_selection_done_event.clear()
+            gui_app.signal.new_emotion_adjectives.emit(adjectives_2)
+            emotion_selection_done_event.wait(timeout=60)
+
+            selected_emotion = None
+            if not selected_emotion_queue.empty():
+                selected_emotion = selected_emotion_queue.get()
         
-            empathy_response_1 = {"role": "assistant", "content": response_1, "time": time_since(start_time)//100}
-            empathy_response_2 = {"role": "assistant", "content": response_2, "time": time_since(start_time)//100}
+            empathy_response_2 = {"role": "assistant", "content": f"{adjectives_2}, User selected {selected_emotion}", "time": time_since(start_time)//100}
 
             empathy_transcript.append(empathy_prompt)
-
+            empathy_transcript.append(empathy_response_1)
+            empathy_transcript.append(empathy_response_2)
 
 
     filename = f"{transcript_path}/{start_time_str}/Emili_raw_EMA_{start_time_str}.txt"
@@ -441,7 +466,7 @@ def construct_empathy_prompt(ema, ema_history, start_time):
     # """
 
     empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order), but don't rely on these labels, as every user is different.
-    The most recent emotional reading, normalized by z-score from the user's average emotions, is {(np.array(ema)-emotion_averages)/emotion_stds}. Using this information, respond with two contrasting adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words, separated by a comma.
+    The most recent emotional reading, normalized by z-score from the user's average emotions, is {ema}. Using this information, respond with two contrasting adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words or hyphenated phrases, separated by a single piece of whitespace. Be creative!
     """
 
     return {"role": "user", "content": empathy_prompt, "time": time_since(start_time)//100}
