@@ -529,13 +529,13 @@ class ChatApp(QMainWindow):  # GUI for LLM video chat
         self.init_FER_tab()
         self.init_transcript_tab()
         self.signal.new_message.connect(self.display_new_message)
+        self.signal.update_transcript.connect(self.update_transcript_display)
 
         self.signal.new_emotion_adjectives.connect(self.show_emotion_adjectives_dialog)
 
         """
         Code for EMILI DPO
         """
-        # self.signal.update_transcript.connect(self.update_transcript_display)
         # self.signal.new_dual_responses.connect(self.display_dual_responses)
 
     def show_emotion_adjectives_dialog(self, adjectives):
@@ -719,22 +719,40 @@ def create_emotion_adjective_selector(adjectives):
             super().__init__()
             self.selected_emotion = None
             self.setWindowTitle("Emotion Check-in")
-            self.setGeometry(300, 300, 400, 200)
+            self.setGeometry(300, 300, 400, 250)
             self.layout = QVBoxLayout()
+            
+            # Set common styling
+            self.setStyleSheet("""
+                QDialog {
+                    background-color: #f8f8f8;
+                }
+                QLabel {
+                    font-size: 16pt;
+                    margin-bottom: 20px;
+                    color: #333333;
+                }
+            """)
             
             # Instructions
             label = QLabel("How are you feeling right now?")
-            label.setStyleSheet("font-size: 16pt; margin-bottom: 20px;")
             self.layout.addWidget(label)
             
             # Buttons for the two adjectives
             adj_layout = QHBoxLayout()
-            adjective_list = adjectives.split()
+            if ", " in adjectives:
+                adjective_list = adjectives.split(", ")
+            else:
+                adjective_list = adjectives.split()
             adjective1, adjective2 = adjective_list[0], adjective_list[1]
+
+            # Create buttons with consistent styling
+            button_style = "font-size: 14pt; padding: 10px; border-radius: 5px; border: 1px solid #cccccc; background-color: #e6f2ff; color: #333333;"
+            
             self.button1 = QPushButton(adjective1)
             self.button2 = QPushButton(adjective2)
-            self.button1.setStyleSheet("font-size: 14pt; padding: 10px;")
-            self.button2.setStyleSheet("font-size: 14pt; padding: 10px;")
+            self.button1.setStyleSheet(button_style)
+            self.button2.setStyleSheet(button_style)
             self.button1.clicked.connect(lambda: self.select_emotion(adjective1))
             self.button2.clicked.connect(lambda: self.select_emotion(adjective2))
             
@@ -742,14 +760,25 @@ def create_emotion_adjective_selector(adjectives):
             adj_layout.addWidget(self.button2)
             self.layout.addLayout(adj_layout)
             
+            # Add a "Select Both" button with a slightly different but complementary styling
+            both_button_style = "font-size: 14pt; padding: 10px; border-radius: 5px; border: 1px solid #cccccc; background-color: #e6ffe6; color: #333333;"
+            self.both_button = QPushButton(f"Select Both: {adjective1} and {adjective2}")
+            self.both_button.setStyleSheet(both_button_style)
+            self.both_button.clicked.connect(lambda: self.select_both_emotions(adjective1, adjective2))
+            self.layout.addWidget(self.both_button)
+            
             # Or enter your own
             custom_layout = QHBoxLayout()
+            input_style = "font-size: 14pt; padding: 8px; border-radius: 5px; border: 1px solid #cccccc; background-color: white;"
+            custom_button_style = "font-size: 14pt; padding: 10px; border-radius: 5px; border: 1px solid #cccccc; background-color: #f0f0f0; color: #333333;"
+            
             self.custom_input = QLineEdit()
             self.custom_input.setPlaceholderText("Enter your own emotion...")
-            self.custom_input.setStyleSheet("font-size: 14pt; padding: 8px;")
+            self.custom_input.setStyleSheet(input_style)
             self.custom_button = QPushButton("Submit")
-            self.custom_button.setStyleSheet("font-size: 14pt; padding: 8px;")
+            self.custom_button.setStyleSheet(custom_button_style)
             self.custom_button.clicked.connect(self.submit_custom)
+            self.custom_input.returnPressed.connect(self.submit_custom)
             
             custom_layout.addWidget(self.custom_input)
             custom_layout.addWidget(self.custom_button)
@@ -761,10 +790,16 @@ def create_emotion_adjective_selector(adjectives):
             self.selected_emotion = adjective
             self.accept()
         
+        def select_both_emotions(self, adjective1, adjective2):
+            self.selected_emotion = f"{adjective1} and {adjective2}"
+            self.accept()
+        
         def submit_custom(self):
             custom_emotion = self.custom_input.text().strip()
+            # print(f"\n\n\n\nCustom emotion submitted: '{custom_emotion}'")
             if custom_emotion:
-                self.selected_emotion = custom_emotion
+                self.selected_emotion = custom_emotion + " (g-label)"
+                # print(f"Setting selected_emotion to: '{self.selected_emotion}'\n\n\n\n")
                 self.accept()
             else:
                 QMessageBox.warning(self, "Input Required", "Please enter an emotion.")

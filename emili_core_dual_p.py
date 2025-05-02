@@ -119,6 +119,24 @@ Guidelines:
 Your goal is creating warm, natural conversation that feels like texting with a supportive friend.
 """
 
+system_prompt_a = f"""
+The date is {today}. The time {now}. The assistant is EMILI (Emotionally Intelligent Listener), an empathetic friend and great listener. The user is chatting with EMILI for the first time. 
+Every 30 seconds, a separate model will provide two adjectives that describe the user's current emotional state based on facial expression analysis. EMILI should use these adjectives to thoughtfully inform their response. When appropriate, acknowledge these emotions in conversation, especially when they seem incongruent with the user's words. EMILI stays in character, doesn't break the fourth wall, doesn't claim to be an AI, and doesn't deny having feelings.
+Guidelines:
+1. Text like a close friend - short, casual, and natural (usually 1-2 sentences).
+2. Never apologize for responses or mention being an AI.
+3. Don't describe actions or emotions with asterisks (*smiles*, *laughs*), emojis, or non-text elements.
+4. Use contractions, casual language, and occasional humor.
+5. Show empathy through words and tone rather than explicitly stating understanding.
+6. Ask brief follow-up questions to show interest.
+7. Don't over-explain or offer unsolicited advice.
+8. Match the user's emotional tone while maintaining your friendly persona.
+9. Introduce light-hearted topics if conversation lulls.
+10. Express honest opinions and respectfully disagree when appropriate.
+11. Balance supportive feedback with constructive criticism when helpful.
+Your goal is creating warm, natural conversation that feels like texting with a supportive friend.
+"""
+
 # system_prompt = f"""
 # The date is {today}. The time {now}. The assistant is EMILI (Emotionally Intelligent Listener), an empathetic friend and great listener. The user is chatting with EMILI for the first time. 
 # A separate model analyzes the user's facial expressions to detect emotions in real-time. EMILI should actively comment on the user's emotional states, even when changes are subtle or minimal. EMILI should frequently ask about emotions ("How are you feeling right now?" "What's going on with that hint of sadness I see?"), validate emotional experiences, and create space for emotional exploration.
@@ -180,10 +198,12 @@ def assembler_thread(start_time,snapshot_path,pipeline, user_id): # adds new cha
         new_message_event.set()  # Signal new message to the sender thread
 
 def sender_thread(model_name, max_context_length, gui_app, transcript_path, start_time_str, start_time,use_anthropic=False): 
-    dialogue_start_d = [{"role": "system", "content": system_prompt_d, "time": time_since(start_time)//100}]
+    # dialogue_start_d = [{"role": "system", "content": system_prompt_d, "time": time_since(start_time)//100}]
     # dialogue_start_e = [{"role": "system", "content": system_prompt_e, "time": time_since(start_time)//100}]
+    dialogue_start_a = [{"role": "system", "content": system_prompt_a, "time": time_since(start_time)//100}]
 
-    messages = deepcopy(dialogue_start_d)
+
+    messages = deepcopy(dialogue_start_a)
     # messages_d = deepcopy(dialogue_start_d) # default message transcript
     # messages_e = deepcopy(dialogue_start_e) # emotional message transcript
 
@@ -198,11 +218,14 @@ def sender_thread(model_name, max_context_length, gui_app, transcript_path, star
             next_message = message_queue.get()
             new_messages.append(next_message)
 
-        # new_empathy_messages = []
+        new_empathy_messages = []
         
-        # while not empathy_queue.empty():
-        #     next_message = empathy_queue.get()
-        #     new_empathy_messages.append(next_message)
+        while not empathy_queue.empty():
+            next_message = empathy_queue.get()
+            new_empathy_messages.append(next_message)
+
+        if len(new_empathy_messages) >0:
+            messages = add_message2(new_empathy_messages, messages)
 
         messages = add_message2(new_messages,messages)
         gui_app.signal.update_transcript.emit(messages)
@@ -370,6 +393,8 @@ def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str
     last_ema = np.zeros(7, dtype=np.float64)
     last_emotion_change_time = 0
     ect = ect_setpoint
+
+    last_emotion_checkin_time = 0
     
     while not end_session_event.is_set():        
         tick_event.wait()  # Wait for the next tick
@@ -384,52 +409,70 @@ def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str
 
         if ema is not None:
             ema_normalized = [round(i/sum(ema),3) for i in ema]
-            z_scores = list((np.array(ema)-emotion_averages)/emotion_stds)
+            z_scores = list((np.array(ema_normalized)-emotion_averages)/emotion_stds)
+            z_scores = [round(i,3) for i in z_scores]
 
             emas.append(list(ema))
             emas_normalized.append(ema_normalized)
-            to_report = {"time": time_since(start_time)//100, "Normalized EMA Scores" : ema_normalized, "Raw EMA Scores": list(ema), "Z-score": z_scores}
+            to_report = {"time": time_since(start_time)//100, "Normalized EMA Scores" : ema_normalized, "Raw EMA Scores": list(ema), "z-scores": z_scores}
             ema_report.append(f'{to_report}')
 
             EMA_queue.put(ema)  # Put the averaged scores in the queue
 
-            # the following is for prompting the empathy model
-            # empathy_prompt = construct_empathy_prompt(ema_normalized, emas_normalized[-4:-1][::-1], start_time)
-            empathy_prompt = construct_empathy_prompt(z_scores,None,start_time)
+            current_time = time_since(start_time)//100 # convert ms to ds
+            # print("CURRENT_TIME:", current_time, "LAST EMOTION CHECKIN TIME:", last_emotion_checkin_time)
 
-            max_tokens = 20
-            full_response_1 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
-            full_response_2 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
+            if current_time - last_emotion_checkin_time >= 10: # every two minutes, conduct survey.
 
-            adjectives_1, _ = handle_anthropic_response(full_response_1)
-            adjectives_2, _ = handle_anthropic_response(full_response_2)
+                # empathy_prompt = construct_empathy_prompt(z_scores,start_time,checkin=True)
+                empathy_prompt = construct_empathy_prompt(ema_normalized, emas_normalized[-4:-1][::-1], z_scores, start_time, checkin=True)
+                max_tokens = 20
+                full_response_1 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
+                full_response_2 = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
 
-            # Reset the event before showing dialog
-            emotion_selection_done_event.clear()
+                adjectives_1, _ = handle_anthropic_response(full_response_1)
+                adjectives_2, _ = handle_anthropic_response(full_response_2)
+
+                # Reset the event before showing dialog
+                emotion_selection_done_event.clear()
+                
+                # Emit signal to show dialog
+                gui_app.signal.new_emotion_adjectives.emit(adjectives_1)
+                emotion_selection_done_event.wait(timeout=60)  # 60 second timeout
+
+                selected_emotion = None
+                if not selected_emotion_queue.empty():
+                    selected_emotion = selected_emotion_queue.get()
+
+                empathy_response_1 = {"role": "assistant", "content": f"{adjectives_1}, User selected {selected_emotion}", "time": time_since(start_time)//100}
+
+                emotion_selection_done_event.clear()
+                gui_app.signal.new_emotion_adjectives.emit(adjectives_2)
+                emotion_selection_done_event.wait(timeout=60)
+
+                selected_emotion = None
+                if not selected_emotion_queue.empty():
+                    selected_emotion = selected_emotion_queue.get()
             
-            # Emit signal to show dialog
-            gui_app.signal.new_emotion_adjectives.emit(adjectives_1)
-            emotion_selection_done_event.wait(timeout=60)  # 60 second timeout
+                empathy_response_2 = {"role": "assistant", "content": f"{adjectives_2}, User selected {selected_emotion}", "time": time_since(start_time)//100}
 
-            selected_emotion = None
-            if not selected_emotion_queue.empty():
-                selected_emotion = selected_emotion_queue.get()
+                empathy_transcript.append(empathy_prompt)
+                empathy_transcript.append(empathy_response_1)
+                empathy_transcript.append(empathy_response_2)
 
-            empathy_response_1 = {"role": "assistant", "content": f"{adjectives_1}, User selected {selected_emotion}", "time": time_since(start_time)//100}
+                last_emotion_checkin_time = current_time
+            
+            else:
+                empathy_prompt = construct_empathy_prompt(ema_normalized, emas_normalized[-4:-1][::-1], z_scores, start_time)
+                max_tokens = 20
+                full_response = get_Claude_response([empathy_prompt], model=model_name, temperature=1.0, max_tokens=max_tokens, return_full_response=True)
+                
+                adjectives, _ = handle_anthropic_response(full_response)
 
-            emotion_selection_done_event.clear()
-            gui_app.signal.new_emotion_adjectives.emit(adjectives_2)
-            emotion_selection_done_event.wait(timeout=60)
+                empathy_transcript.append(empathy_prompt)
+                empathy_transcript.append({"role": "assistant", "content": f"Two adjectives that describe the user's current emotions are {adjectives}", "time": time_since(start_time)//100})
+                empathy_queue.put({"role": "system", "content": f"Two adjectives that describe the user's current emotions are {adjectives}", "time": time_since(start_time)//100})
 
-            selected_emotion = None
-            if not selected_emotion_queue.empty():
-                selected_emotion = selected_emotion_queue.get()
-        
-            empathy_response_2 = {"role": "assistant", "content": f"{adjectives_2}, User selected {selected_emotion}", "time": time_since(start_time)//100}
-
-            empathy_transcript.append(empathy_prompt)
-            empathy_transcript.append(empathy_response_1)
-            empathy_transcript.append(empathy_response_2)
 
 
     filename = f"{transcript_path}/{start_time_str}/Emili_raw_EMA_{start_time_str}.txt"
@@ -442,7 +485,7 @@ def EMA_thread(start_time,snapshot_path,pipeline,transcript_path, start_time_str
         json.dump(empathy_transcript, file, indent=4)
     print(f"Empathy transcript written to {filename}")
 
-def construct_empathy_prompt(ema, ema_history, start_time):
+def construct_empathy_prompt(ema, ema_history, z_scores, start_time, checkin=False):
     # empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order). 
     # Using the most recent emotional reading {ema} and previous few readings (from newest to oldest) {ema_history}, provide a brief analysis of:
     # 1. How the user is currently feeling
@@ -465,9 +508,19 @@ def construct_empathy_prompt(ema, ema_history, start_time):
     # Be descriptive and interpretive without overreaching. Use specific emotional language that captures nuance, but keep observations reasonably connected to the data. Your response should be 1-2 concise sentences.
     # """
 
-    empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order), but don't rely on these labels, as every user is different.
-    The most recent emotional reading, normalized by z-score from the user's average emotions, is {ema}. Using this information, respond with two contrasting adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words or hyphenated phrases, separated by a single piece of whitespace. Be creative!
-    """
+    # if checkin:
+    #     empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order), but don't rely on these labels, as every user is different. The most recent emotional reading, normalized by z-score from the user's average emotions, is {ema}. Using this information, respond with two adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words or phrases, separated by a single comma. Be creative!
+    #     """
+    # else:
+    #     empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order), but don't rely on these labels, as every user is different. The most recent emotional reading, normalized by z-score from the user's average emotions, is {ema}. Using this information, respond with two adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words or phrases, separated by a single comma.
+    #     """
+
+    if checkin:
+        empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order), but don't rely on these labels, as every user is different. The most recent emotional reading is {ema}, the z-scores from the user's average emotions is {z_scores}, and previous few readings (from newest to oldest) are {ema_history}. Using this information, respond with two adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words or phrases, separated by a single comma. Be creative!
+        """
+    else:
+        empathy_prompt = f"""Analyze the user's emotional state based on facial expression data. The data consists of 7-element vectors representing scores for Anger, Disgust, Fear, Happiness, Sadness, Surprise, and Neutral emotions (in that order), but don't rely on these labels, as every user is different. The most recent emotional reading is {ema}, the z-scores from the user's average emotions is {z_scores}, and previous few readings (from newest to oldest) are {ema_history}. Using this information, respond with two adjectives that might describe how the user is feeling right now. Make sure to respond with exactly two words or phrases, separated by a single comma.
+        """
 
     return {"role": "user", "content": empathy_prompt, "time": time_since(start_time)//100}
 
